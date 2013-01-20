@@ -6,13 +6,17 @@ import org.yaml.snakeyaml.*;
 
 public class MessagePasser {
 	
+	public static int newMsgId;
+	ArrayList<Message> recMsgBuffer;
+	ArrayList<Message> recDelayBuffer;
+	ArrayList<Message> sendMsgBuffer;
 	// Local information for this node
-	private Socket thisSocket;
+	//private Socket thisSocket;
 	private String local_name;
 	private PortIP local_portip;
 	
 	// Sockets to other nodes
-	private Map<String, Socket> otherSockets;
+	private Map<String, PortIP> otherSockets;
 	
 	// Send and receive rules; of the form {Name=name, Src=src, N=n}, where n is a number counting the times the rule was applied
 	private List<Map> sendRules;
@@ -24,9 +28,13 @@ public class MessagePasser {
 		
 	 public MessagePasser(String configuration_filename, String local_name) throws IOException {
 		 
+		 newMsgId = 0;
+		 this.recMsgBuffer = new ArrayList<Message>();
+		 this.recDelayBuffer = new ArrayList<Message>();
+		 this.sendMsgBuffer = new ArrayList<Message>();
 		 this.local_name = local_name;
 		 local_portip = null;
-		 thisSocket = null;
+		 //thisSocket = null;
 		 
 		 yaml = new Yaml();
 		 
@@ -41,7 +49,7 @@ public class MessagePasser {
 		 return local_portip;
 	 }
 	 
-	 public Socket getRemoteDetails(String r_name) {
+	 public PortIP getRemoteDetails(String r_name) {
 		 return otherSockets.get("r_name");
 	 }
 	 
@@ -64,7 +72,8 @@ public class MessagePasser {
 				 String o_name = (String) cfg.get("Name");
 				 String o_ip = (String) cfg.get("IP");
 				 int o_port = (int) cfg.get("Port");
-				 //otherSockets.put(o_name, new Socket(o_ip, o_port));
+				 PortIP temp_portip = new PortIP(o_port, o_ip);
+				 otherSockets.put(o_name, temp_portip);
 			 }
 		 }
 	 }
@@ -114,22 +123,80 @@ public class MessagePasser {
 		 }
 		 return null;
 	 }
+
+	 void checkSendBuffer() {
+		 for(int i = 0; i < sendMsgBuffer.size(); i++) {
+			 sendMessage(sendMsgBuffer.get(i));
+		 }
+		 sendMsgBuffer.clear();
+	 }
+	 
+	 void sendMessage(Message message) {
+		 PortIP destSocket = getRemoteDetails(message.messageDest);
+		 try {
+			Socket sendSocket = new Socket(destSocket.IP, destSocket.Port);
+			ObjectOutputStream outStream = new ObjectOutputStream(sendSocket.getOutputStream());
+			outStream.writeObject(message);
+			sendSocket.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	 }
 	 
 	 void send(Message message) {
+			newMsgId ++;
+			message.setId(newMsgId);
+			
+			Action sendAction = getSendAction(message.messageSource, message.messageDest, message.messageKind, message.messageId);
+			
+			switch(sendAction) {
+			case delay:
+				sendMsgBuffer.add(message);
+				break;
+			case drop:
+				break;
+			case duplicate:
+				sendMessage(message);
+				sendMessage(message);
+				break;
+			default:
+				checkSendBuffer();
+				sendMessage(message);
+			}
+	 }
+	 
+	 void preReceive(Message message) {
 		 
+		 Action recAction = getReceiveAction(message.messageSource, message.messageDest, message.messageKind, message.messageId);
+		 
+			switch(recAction) {
+			case delay:
+				recDelayBuffer.add(message);
+				break;
+			case drop:
+				break;
+			case duplicate:
+				recMsgBuffer.add(message);
+				recMsgBuffer.add(message);
+				break;
+			default:
+				for(int i = 0; i < recDelayBuffer.size(); i++) {
+					recMsgBuffer.add(recDelayBuffer.get(i));
+				}
+				recDelayBuffer.clear();
+				recMsgBuffer.add(message);
+			}
 	 }
 	 
 	 Message receive( ) {// may block
+		 int first = 0;
+		 
+		 if(recMsgBuffer.size() != 0) {
+			 return recMsgBuffer.remove(first);
+		 }
+		 
 		 return null;
 	 }
 	 
-	 public class PortIP {
-		 public int Port;
-		 public String IP;
-		 
-		 public PortIP(int port, String ip) {
-			 this.Port = port;
-			 this.IP = ip;
-		 }
-	 }
 }
